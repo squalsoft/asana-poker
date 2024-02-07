@@ -1,11 +1,12 @@
-package sqlite
+package pgsql
 
 import (
 	"database/sql"
 	"errors"
 	"fmt"
-
 	"github.com/mattn/go-sqlite3"
+
+	_ "github.com/lib/pq"
 
 	"asana-poker-back/internal/storage"
 )
@@ -14,15 +15,22 @@ type Storage struct {
 	db *sql.DB
 }
 
-func New(storagePath string) (*Storage, error) {
-	const op = "storage.sqlite.New"
+func New(psqlInfo string) (*Storage, error) {
+	const op = "storage.pgsql.New"
 
-	db, err := sql.Open("sqlite3", storagePath)
+	db, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	stmt, err := db.Prepare(`
+	err = db.Ping()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	fmt.Println("Successfully connected!")
+
+	_, err = db.Exec(`
 	CREATE TABLE IF NOT EXISTS url(
 		id INTEGER PRIMARY KEY,
 		alias TEXT NOT NULL UNIQUE,
@@ -33,16 +41,20 @@ func New(storagePath string) (*Storage, error) {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 
-	_, err = stmt.Exec()
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", op, err)
-	}
+	// _, err = stmt.Exec()
+	//if err != nil {
+	//	return nil, fmt.Errorf("%s: %w", op, err)
+	//}
 
 	return &Storage{db: db}, nil
 }
 
+func (s *Storage) Close() {
+	s.db.Close()
+}
+
 func (s *Storage) SaveURL(urlToSave string, alias string) (int64, error) {
-	const op = "storage.sqlite.SaveURL"
+	const op = "storage.pgsql.SaveURL"
 
 	stmt, err := s.db.Prepare("INSERT INTO url(url, alias) VALUES(?, ?)")
 	if err != nil {
@@ -67,7 +79,7 @@ func (s *Storage) SaveURL(urlToSave string, alias string) (int64, error) {
 }
 
 func (s *Storage) GetURL(alias string) (string, error) {
-	const op = "storage.sqlite.GetURL"
+	const op = "storage.pgsql.GetURL"
 
 	stmt, err := s.db.Prepare("SELECT url FROM url WHERE alias = ?")
 	if err != nil {

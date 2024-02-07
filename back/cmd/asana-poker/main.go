@@ -1,10 +1,15 @@
 package main
 
 import (
+	"asana-poker-back/internal/http-server/handlers/test"
+	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -13,12 +18,11 @@ import (
 	"golang.org/x/exp/slog"
 
 	"asana-poker-back/internal/config"
-	"asana-poker-back/internal/http-server/handlers/redirect"
 	"asana-poker-back/internal/http-server/handlers/url/save"
 	mwLogger "asana-poker-back/internal/http-server/middleware/logger"
 	"asana-poker-back/internal/lib/logger/handlers/slogpretty"
 	"asana-poker-back/internal/lib/logger/sl"
-	"asana-poker-back/internal/storage/sqlite"
+	"asana-poker-back/internal/storage/pgsql"
 )
 
 const (
@@ -39,11 +43,12 @@ func main() {
 	)
 	log.Debug("debug messages are enabled")
 
-	storage, err := sqlite.New(cfg.StoragePath)
+	storage, err := pgsql.New(cfg.StoragePath)
 	if err != nil {
 		log.Error("failed to init storage", sl.Err(err))
 		os.Exit(1)
 	}
+	defer storage.Close()
 
 	router := chi.NewRouter()
 
@@ -62,7 +67,16 @@ func main() {
 		// TODO: add DELETE /url/{id}
 	})
 
-	router.Get("/{alias}", redirect.New(log, storage))
+	//router.Get("/{alias}", redirect.New(log, storage))
+	router.Get("/parallel", func(w http.ResponseWriter, r *http.Request) {
+		gid, _ := goid()
+		log.Info("start req", gid)
+		time.Sleep(time.Second * 3)
+		log.Info("end req")
+		w.Write([]byte("OK"))
+	})
+
+	router.Get("/test", test.New(log))
 
 	log.Info("starting server", slog.String("address", cfg.Address))
 
@@ -136,4 +150,29 @@ func setupPrettySlog() *slog.Logger {
 	handler := opts.NewPrettyHandler(os.Stdout)
 
 	return slog.New(handler)
+}
+
+var (
+	goroutinePrefix = []byte("goroutine ")
+	errBadStack     = errors.New("invalid runtime.Stack output")
+)
+
+// This is terrible, slow, and should never be used.
+func goid() (int, error) {
+	buf := make([]byte, 32)
+	n := runtime.Stack(buf, false)
+	buf = buf[:n]
+	// goroutine 1 [running]: ...
+
+	buf, ok := bytes.CutPrefix(buf, goroutinePrefix)
+	if !ok {
+		return 0, errBadStack
+	}
+
+	i := bytes.IndexByte(buf, ' ')
+	if i < 0 {
+		return 0, errBadStack
+	}
+
+	return strconv.Atoi(string(buf[:i]))
 }
